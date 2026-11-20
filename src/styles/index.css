@@ -1,0 +1,165 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+@theme {
+  --color-burgundy-50: #F8EEF0;
+  --color-burgundy-100: #F0DCE0;
+  --color-burgundy-500: #8A3346;
+  --color-burgundy-600: #6B1D2F;
+  --color-burgundy-700: #551624;
+  --color-burgundy-800: #410F1B;
+
+  --color-powder-50: #F7ECEE;
+  --color-powder-100: #F2E4E5;
+  --color-powder-200: #E7D2D4;
+  --color-powder-300: #DEC4C5;
+  --color-powder-400: #C9A7AA;
+  --color-powder-500: #9E7A7F;
+
+  --color-cream-50: #FFFDFB;
+  --color-cream-100: #FAF7F4;
+  --color-cream-200: #EFEAE4;
+  --color-cream-300: #E4DBD4;
+
+  --color-navy-950: #171E2B;
+  --color-navy-900: #232B3A;
+  --color-navy-700: #3B4252;
+  --color-navy-600: #4A5263;
+  --color-navy-500: #5E6676;
+
+  --font-display: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  --shadow-card: 0 1px 2px rgb(35 43 58 / 0.05), 0 8px 24px -12px rgb(35 43 58 / 0.10);
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    line-height: var(--leading-body);
+    text-align: start;
+    overflow-wrap: break-word;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    color: var(--text-primary);
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  dialog:modal {
+    overscroll-behavior: contain;
+  }
+
+  dialog::backdrop {
+    background-color: rgb(35 43 58 / 0.45);
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
+
+  .sortable-handle {
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: grab;
+  }
+
+  .is-dragging-sortable,
+  .is-dragging-sortable * {
+    cursor: grabbing !important;
+  }
+
+  /* Aşama 12: Erişilebilir indeterminate ilerleme çubuğu (modern-web-guidance progress rehberi) */
+  .quizora-progress {
+    appearance: none;
+    border: 0 solid;
+    overflow: clip;
+    container-type: inline-size;
+    inline-size: 100%;
+    block-size: 0.5rem;
+    border-radius: 9999px;
+    background: var(--color-cream-200);
+    color: var(--color-burgundy-600);
+    --progress-bar-indeterminate-size: 32%;
+    --progress-bar-indeterminate-animation-duration: 1.5s;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .quizora-progress {
+      --progress-bar-indeterminate-animation-duration: 10s;
+    }
+  }
+
+  .quizora-progress::-webkit-progress-bar {
+    background: transparent;
+  }
+
+  .quizora-progress::-webkit-progress-value {
+    background: var(--color-burgundy-600);
+    border-radius: 9999px;
+  }
+
+  .quizora-progress::-moz-progress-bar {
+    background: var(--color-burgundy-600);
+    border-radius: 9999px;
+  }
+
+  .quizora-progress:indeterminate::-webkit-progress-value {
+    animation: quizora-progress-indeterminate var(--progress-bar-indeterminate-animation-duration) infinite linear;
+  }
+
+  .quizora-progress:indeterminate::-moz-progress-bar {
+    animation: quizora-progress-indeterminate var(--progress-bar-indeterminate-animation-duration) infinite linear;
+  }
+
+  @keyframes quizora-progress-indeterminate {
+    from,
+    to {
+      inline-size: var(--progress-bar-indeterminate-size);
+      margin-right: auto;
+    }
+    from {
+      translate: -100%;
+    }
+    to {
+      translate: 100cqi;
+    }
+  }
+
+  /* Aşama 12: Zorunlu alt çizgili ve boyut değiştirmeyen sekme göstergesi (modern-web-guidance tabs rehberi) */
+  .quizora-tab[role='tab'] {
+    position: relative;
+  }
+
+  .quizora-tab[role='tab'][aria-selected='true']::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0;
+    border-block-end: 3px solid var(--accent-primary);
+  }
+}

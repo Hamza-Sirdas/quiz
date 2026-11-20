@@ -1,0 +1,238 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GameSessionStatus {
+  LOBBY
+  IN_PROGRESS
+  FINISHED
+  CANCELLED
+  INTERRUPTED
+}
+
+enum QuizStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum QuizVisibility {
+  PRIVATE
+  UNLISTED
+  PUBLIC
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+  MULTI_SELECT
+  ORDERING
+}
+
+enum AiGenerationMethod {
+  TOPIC
+  PDF
+  TEXT
+}
+
+model Teacher {
+  id                  String               @id @default(cuid())
+  name                String               @db.VarChar(80)
+  email               String               @unique @db.VarChar(160)
+  passwordHash        String               @db.VarChar(256)
+  termsAcceptedAt     DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  sessions            TeacherSession[]
+  passwordResetTokens PasswordResetToken[]
+  quizzes             Quiz[]
+  gameSessions        GameSession[]
+}
+
+model TeacherSession {
+  id         String   @id @default(cuid())
+  teacherId  String
+  tokenHash  String   @unique @db.VarChar(128)
+  userAgent  String?  @db.VarChar(256)
+  lastUsedAt DateTime @default(now())
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  teacher    Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@index([teacherId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  teacherId String
+  tokenHash String    @unique @db.VarChar(128)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  teacher   Teacher   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@index([teacherId])
+  @@index([expiresAt])
+}
+
+model Quiz {
+  id                  String              @id @default(cuid())
+  ownerId             String?
+  status              QuizStatus          @default(PUBLISHED)
+  visibility          QuizVisibility      @default(PRIVATE)
+  shareToken          String?             @unique @db.VarChar(128)
+  allowPublicPreview  Boolean             @default(true)
+  originalQuizId      String?
+  aiGenerated         Boolean             @default(false)
+  aiGenerationMethod  AiGenerationMethod?
+  aiSourceType        String?             @db.VarChar(60)
+  aiSourceSummary     String?             @db.VarChar(200)
+  aiGeneratedAt       DateTime?
+  title               String              @db.VarChar(120)
+  description         String              @default("") @db.VarChar(500)
+  category            String              @db.VarChar(60)
+  coverImageUrl       String?             @db.VarChar(500)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  owner               Teacher?            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  originalQuiz        Quiz?               @relation("QuizCopies", fields: [originalQuizId], references: [id], onDelete: SetNull)
+  copiedQuizzes       Quiz[]              @relation("QuizCopies")
+  questions           Question[]
+  gameSessions        GameSession[]
+
+  @@index([ownerId])
+  @@index([ownerId, status])
+  @@index([ownerId, visibility])
+  @@index([ownerId, aiGenerated])
+  @@index([ownerId, updatedAt(sort: Desc)])
+  @@index([status, visibility, category, updatedAt(sort: Desc)])
+  @@index([status, visibility, updatedAt(sort: Desc)])
+  @@index([originalQuizId])
+  @@index([category])
+  @@index([updatedAt(sort: Desc)])
+}
+
+model Question {
+  id                 String         @id @default(cuid())
+  quizId             String
+  order              Int
+  type               QuestionType   @default(MULTIPLE_CHOICE)
+  text               String         @db.VarChar(400)
+  explanation        String         @default("") @db.VarChar(600)
+  sourceReference    String?        @db.VarChar(200)
+  difficulty         String?        @db.VarChar(20)
+  allowPartialCredit Boolean        @default(false)
+  imageUrl           String?        @db.VarChar(500)
+  timeLimitSec       Int            @default(20)
+  points             Int            @default(1000)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  quiz               Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  options            AnswerOption[]
+
+  @@unique([quizId, order])
+  @@index([quizId])
+}
+
+model AnswerOption {
+  id         String   @id @default(cuid())
+  questionId String
+  order      Int
+  text       String   @db.VarChar(200)
+  isCorrect  Boolean  @default(false)
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, order])
+  @@index([questionId])
+}
+
+model GameSession {
+  id            String            @id @default(cuid())
+  pin           String            @db.VarChar(6)
+  quizId        String?
+  hostTeacherId String?
+  quizTitle     String            @db.VarChar(120)
+  quizCategory  String            @db.VarChar(60)
+  hostTokenHash String            @db.VarChar(128)
+  status        GameSessionStatus @default(LOBBY)
+  maxPlayers    Int               @default(60)
+  quizSnapshot  Json
+  startedAt     DateTime?
+  endedAt       DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  quiz          Quiz?             @relation(fields: [quizId], references: [id], onDelete: SetNull)
+  hostTeacher   Teacher?          @relation(fields: [hostTeacherId], references: [id], onDelete: SetNull)
+  participants  GameParticipant[]
+  answers       GameAnswer[]
+  results       GameResult[]
+
+  @@index([hostTeacherId])
+  @@index([hostTeacherId, status, createdAt(sort: Desc)])
+  @@index([pin, status])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+}
+
+model GameParticipant {
+  id                 String       @id @default(cuid())
+  sessionId          String
+  nickname           String       @db.VarChar(24)
+  normalizedName     String       @db.VarChar(24)
+  reconnectTokenHash String       @db.VarChar(128)
+  score              Int          @default(0)
+  correctCount       Int          @default(0)
+  totalResponseMs    Int          @default(0)
+  kicked             Boolean      @default(false)
+  joinedAt           DateTime     @default(now())
+  lastSeenAt         DateTime     @default(now())
+  session            GameSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  answers            GameAnswer[]
+  result             GameResult?
+
+  @@unique([sessionId, normalizedName])
+  @@index([sessionId])
+  @@index([sessionId, kicked])
+}
+
+model GameAnswer {
+  id               String          @id @default(cuid())
+  sessionId        String
+  participantId    String
+  questionIndex    Int
+  selectedOptionId String
+  answerPayload    Json?
+  isCorrect        Boolean
+  isPartial        Boolean         @default(false)
+  responseTimeMs   Int
+  pointsAwarded    Int
+  answeredAt       DateTime        @default(now())
+  session          GameSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participant      GameParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([participantId, questionIndex])
+  @@index([sessionId, questionIndex])
+  @@index([sessionId, participantId])
+}
+
+model GameResult {
+  id             String          @id @default(cuid())
+  sessionId      String
+  participantId  String          @unique
+  nickname       String          @db.VarChar(24)
+  rank           Int
+  totalScore     Int
+  correctCount   Int
+  totalQuestions Int
+  avgResponseMs  Int
+  createdAt      DateTime        @default(now())
+  session        GameSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participant    GameParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, rank])
+}

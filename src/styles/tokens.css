@@ -1,0 +1,95 @@
+:root {
+  /* Tier 1 — Marka Paleti (Literal Tokenlar) */
+  --color-burgundy-50: #F8EEF0;
+  --color-burgundy-100: #F0DCE0;
+  --color-burgundy-500: #8A3346;
+  --color-burgundy-600: #6B1D2F;
+  --color-burgundy-700: #551624;
+  --color-burgundy-800: #410F1B;
+
+  --color-powder-50: #F7ECEE;
+  --color-powder-100: #F2E4E5;
+  --color-powder-200: #E7D2D4;
+  --color-powder-300: #DEC4C5;
+  --color-powder-400: #C9A7AA;
+  --color-powder-500: #9E7A7F;
+
+  --color-cream-50: #FFFDFB;
+  --color-cream-100: #FAF7F4;
+  --color-cream-200: #EFEAE4;
+  --color-cream-300: #E4DBD4;
+
+  --color-navy-950: #171E2B;
+  --color-navy-900: #232B3A;
+  --color-navy-700: #3B4252;
+  --color-navy-600: #4A5263;
+  --color-navy-500: #5E6676;
+
+  /* Tier 2 — Semantik Tokenlar */
+  --bg-canvas: var(--color-cream-100);
+  --bg-surface: var(--color-cream-50);
+  --bg-surface-muted: var(--color-cream-200);
+  --bg-brand-soft: var(--color-powder-100);
+  --bg-brand-canvas: var(--color-powder-300);
+
+  --text-primary: var(--color-navy-900);
+  --text-secondary: var(--color-navy-600);
+  --text-on-powder: var(--color-navy-700);
+  --text-muted: var(--color-navy-500);
+  --text-on-burgundy: var(--color-cream-50);
+  --text-on-navy: var(--color-cream-50);
+
+  --accent-primary: var(--color-burgundy-600);
+  --accent-primary-hover: var(--color-burgundy-700);
+  --accent-secondary: var(--color-navy-900);
+  --accent-secondary-hover: var(--color-navy-950);
+
+  --border-subtle: var(--color-cream-300);
+  --border-rose: var(--color-powder-200);
+  --border-control: var(--color-powder-500);
+  --focus-ring: var(--color-burgundy-600);
+
+  /* Tipografi */
+  --font-display: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  --text-display: clamp(2rem, 1.35rem + 2.4vw, 3.25rem);
+  --leading-display: 1.08;
+  --text-h1: clamp(1.625rem, 1.25rem + 1.4vw, 2.25rem);
+  --leading-h1: 1.15;
+  --text-h2: clamp(1.25rem, 1.05rem + 0.75vw, 1.625rem);
+  --leading-h2: 1.25;
+  --text-h3: 1.125rem;
+  --leading-h3: 1.35;
+  --text-body: 1rem;
+  --leading-body: 1.55;
+  --text-body-sm: 0.875rem;
+  --leading-body-sm: 1.5;
+  --text-caption: 0.75rem;
+  --leading-caption: 1.4;
+
+  /* Köşe Yuvarlaklığı ve Gölge */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --shadow-card: 0 1px 2px rgb(35 43 58 / 0.05), 0 8px 24px -12px rgb(35 43 58 / 0.10);
+}
+
+@media (forced-colors: active) {
+  :root {
+    --bg-canvas: Canvas;
+    --bg-surface: Canvas;
+    --bg-surface-muted: Canvas;
+    --bg-brand-soft: Canvas;
+    --bg-brand-canvas: Canvas;
+    --text-primary: CanvasText;
+    --text-secondary: CanvasText;
+    --text-on-powder: CanvasText;
+    --text-muted: GrayText;
+    --border-subtle: CanvasText;
+    --border-rose: CanvasText;
+    --border-control: CanvasText;
+    --focus-ring: Highlight;
+  }
+}

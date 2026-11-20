@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-server
+test-results
+playwright-report
+.env
+.env.local
+*.local
+.DS_Store
+server/uploads/*
+!server/uploads/.gitkeep
+backups/
