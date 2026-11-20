@@ -1,12 +1,14 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import multer from 'multer';
 
-export const UPLOADS_DIR = path.resolve(
-  process.cwd(),
-  process.env.UPLOADS_DIR || path.join('server', 'uploads'),
-);
+export const UPLOADS_DIR = process.env.UPLOADS_DIR
+  ? path.resolve(process.cwd(), process.env.UPLOADS_DIR)
+  : process.env.VERCEL === '1'
+    ? path.join(os.tmpdir(), 'quizora-uploads')
+    : path.resolve(process.cwd(), 'server', 'uploads');
 
 export const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 export const ALLOWED_IMAGE_MIMES = [

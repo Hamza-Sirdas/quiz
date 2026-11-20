@@ -9,6 +9,7 @@ import type {
   PresenterResultFocus,
 } from '@shared/gameTypes';
 import { QuizoraLogo } from '@/components/brand/QuizoraLogo';
+import { buildGameJoinUrl, buildGamePresentUrl } from '@/config/runtime';
 import { ConfirmDialog } from '@/components/dashboard/ConfirmDialog';
 import { CelebrationConfetti } from '@/components/game/CelebrationConfetti';
 import { LeaderboardTable } from '@/components/game/LeaderboardTable';
@@ -139,10 +140,7 @@ export function HostGamePage() {
   };
 
   const hostToken = readHostToken(pin);
-  const joinUrl =
-    typeof window !== 'undefined'
-      ? `${window.location.origin}/join?pin=${pin}`
-      : `/join?pin=${pin}`;
+  const joinUrl = buildGameJoinUrl(pin);
 
   useEffect(() => {
     if (!pin || !/^\d{6}$/.test(pin)) return;
@@ -497,12 +495,9 @@ export function HostGamePage() {
     );
   };
 
-  const presenterUrl =
-    snapshot && typeof window !== 'undefined'
-      ? `${window.location.origin}/present/${snapshot.pin}?token=${encodeURIComponent(snapshot.presenterToken)}`
-      : snapshot
-        ? `/present/${snapshot.pin}?token=${encodeURIComponent(snapshot.presenterToken)}`
-        : '';
+  const presenterUrl = snapshot
+    ? buildGamePresentUrl(snapshot.pin, snapshot.presenterToken)
+    : '';
 
   const handleOpenPresenterWindow = () => {
     if (!presenterUrl || !snapshot) return;

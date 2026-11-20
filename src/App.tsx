@@ -148,6 +148,10 @@ const router = createBrowserRouter([
         element: <JoinGamePage />,
       },
       {
+        path: '/join/:pin',
+        element: <JoinGamePage />,
+      },
+      {
         path: '/explore',
         element: <ExplorePage />,
       },

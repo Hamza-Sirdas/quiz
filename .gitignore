@@ -10,3 +10,6 @@ playwright-report
 server/uploads/*
 !server/uploads/.gitkeep
 backups/
+
+.vercel
+.env*

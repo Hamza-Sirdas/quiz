@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { motion } from 'motion/react';
 import {
+  AI_DAILY_LIMIT_EXHAUSTED_MESSAGE,
   AI_DIFFICULTIES,
   AI_DIFFICULTY_LABELS,
   AI_GENERATION_METHODS,
@@ -17,6 +18,7 @@ import {
   AI_LIMITS,
   AI_METHOD_LABELS,
   AI_QUESTION_DIFFICULTY_LABELS,
+  type AiDailyQuotaStatus,
   type AiDifficulty,
   type AiGeneratedQuestion,
   type AiGeneratedQuizDraft,
@@ -138,6 +140,7 @@ export function AiCreateQuizPage() {
   const [serviceStatus, setServiceStatus] = useState<AiServiceStatus | null>(
     null,
   );
+  const [dailyQuota, setDailyQuota] = useState<AiDailyQuotaStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
 
   const [mode, setMode] = useState<AiGenerationMethod>('TOPIC');
@@ -191,7 +194,12 @@ export function AiCreateQuizPage() {
     setStatusLoading(true);
     getAiStatus()
       .then((status) => {
-        if (active) setServiceStatus(status);
+        if (active) {
+          setServiceStatus(status);
+          if (status.dailyQuota) {
+            setDailyQuota(status.dailyQuota);
+          }
+        }
       })
       .catch(() => {
         if (active) setServiceStatus(null);
@@ -394,7 +402,15 @@ export function AiCreateQuizPage() {
     );
   };
 
+  const dailyLimitValue =
+    dailyQuota?.dailyLimit ??
+    serviceStatus?.dailyLimit ??
+    AI_LIMITS.DAILY_QUIZ_LIMIT;
+  const remainingToday = dailyQuota?.remainingToday ?? dailyLimitValue;
+  const isDailyQuotaExhausted = dailyQuota !== null && dailyQuota.remainingToday <= 0;
+
   const runGeneration = async () => {
+    if (isGenerating || isDailyQuotaExhausted) return;
     setGenerationError(null);
     abortControllerRef.current?.abort();
     const controller = new AbortController();
@@ -402,7 +418,7 @@ export function AiCreateQuizPage() {
 
     setIsGenerating(true);
     try {
-      const { draft } = await generateAiQuiz(
+      const { draft, dailyQuota: updatedQuota } = await generateAiQuiz(
         {
           mode,
           topic: mode === 'TOPIC' ? topic.trim() : undefined,
@@ -422,12 +438,25 @@ export function AiCreateQuizPage() {
         controller.signal,
       );
 
+      if (updatedQuota) {
+        setDailyQuota(updatedQuota);
+      }
+
       setPreviewDraft(toEditableDraft(draft));
       showToast(
         'Sorular önizlemeye hazır',
         `${draft.questions.length} soru oluşturuldu. Kaydetmeden önce inceleyip düzenleyebilirsiniz.`,
       );
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'DAILY_LIMIT_REACHED') {
+        setDailyQuota((prev) => ({
+          dailyLimit: prev?.dailyLimit ?? dailyLimitValue,
+          usedToday: prev?.dailyLimit ?? dailyLimitValue,
+          remainingToday: 0,
+          usageDate: prev?.usageDate ?? '',
+          timezone: 'Europe/Istanbul',
+        }));
+      }
       const msg =
         err instanceof ApiError
           ? err.message
@@ -667,13 +696,50 @@ export function AiCreateQuizPage() {
           </p>
         </div>
 
-        <Link
-          to="/dashboard/quizzes/new"
-          className="inline-flex items-center justify-center rounded-xl border border-cream-300 bg-cream-50 hover:bg-cream-200 px-4 py-2.5 text-xs sm:text-sm font-semibold text-navy-900 shrink-0"
-        >
-          Manuel Quiz Editörüne Geç
-        </Link>
+        <div className="flex flex-col sm:items-end gap-2 shrink-0">
+          <div
+            data-testid="ai-daily-quota-badge"
+            className={cn(
+              'rounded-xl border px-3.5 py-2 text-xs font-semibold tabular-nums flex items-center gap-2',
+              isDailyQuotaExhausted
+                ? 'bg-burgundy-50 border-burgundy-500 text-burgundy-800'
+                : 'bg-cream-50 border-cream-300 text-navy-900',
+            )}
+          >
+            <SparklesIcon className="h-3.5 w-3.5 text-burgundy-600 shrink-0" />
+            <span>
+              Bugün Kalan Hakkınız: {remainingToday} / {dailyLimitValue}
+            </span>
+          </div>
+          <Link
+            to="/dashboard/quizzes/new"
+            className="inline-flex items-center justify-center rounded-xl border border-cream-300 bg-cream-50 hover:bg-cream-200 px-4 py-2 text-xs sm:text-sm font-semibold text-navy-900"
+          >
+            Manuel Quiz Editörüne Geç
+          </Link>
+        </div>
       </div>
+
+      {/* Günlük Kullanım Hakkı Dolduğunda Bilgilendirme */}
+      {isDailyQuotaExhausted && (
+        <div
+          role="status"
+          className="rounded-2xl bg-burgundy-50 border border-burgundy-500 p-4 sm:p-5 text-navy-900"
+        >
+          <div className="flex items-start gap-3">
+            <AlertCircleIcon className="mt-0.5 shrink-0 text-burgundy-600" />
+            <div className="space-y-1 text-sm">
+              <p className="font-display font-bold text-burgundy-800">
+                {AI_DAILY_LIMIT_EXHAUSTED_MESSAGE}
+              </p>
+              <p className="text-xs text-navy-700">
+                Günlük kullanım hakları her gün Türkiye saatiyle (Europe/Istanbul) 00:00&apos;da
+                otomatik olarak yenilenir. Bu sırada manuel editörle sınırsız quiz oluşturabilirsiniz.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Yapay Zekâ Sağlayıcı Yapılandırma Durumu (Dürüst Bildirim) */}
       {!statusLoading && serviceStatus && !serviceStatus.configured && (
@@ -757,7 +823,7 @@ export function AiCreateQuizPage() {
                 {AI_METHOD_LABELS[mode]}
               </span>
               <h2 className="mt-2 font-display font-bold text-xl text-navy-900">
-                Sorularınız Hazırlanıyor
+                Sorular hazırlanıyor...
               </h2>
             </div>
 
@@ -1648,7 +1714,7 @@ export function AiCreateQuizPage() {
                     className="w-24 min-h-12 rounded-xl border border-cream-300 bg-cream-100 px-3 py-2 text-base sm:text-sm font-bold tabular-nums text-navy-900"
                   />
                   <div className="flex flex-wrap gap-1.5">
-                    {[5, 10, 15, 20, 30].map((preset) => (
+                    {[3, 5, 8, 10].map((preset) => (
                       <button
                         key={preset}
                         type="button"
@@ -1816,8 +1882,8 @@ export function AiCreateQuizPage() {
             </p>
             <button
               type="submit"
-              disabled={isGenerating || extractingPdf}
-              className="inline-flex items-center justify-center gap-2 min-h-12 rounded-xl bg-burgundy-600 hover:bg-burgundy-700 px-6 py-3 text-sm font-semibold text-cream-50 cursor-pointer disabled:opacity-60"
+              disabled={isGenerating || extractingPdf || isDailyQuotaExhausted}
+              className="inline-flex items-center justify-center gap-2 min-h-12 rounded-xl bg-burgundy-600 hover:bg-burgundy-700 px-6 py-3 text-sm font-semibold text-cream-50 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <SparklesIcon className="h-4 w-4" />
               <span>Soruları Oluştur</span>

@@ -8,6 +8,7 @@ const ROUTE_TITLES: ReadonlyArray<{ pattern: string; title: string }> = [
   { pattern: '/forgot-password', title: 'Şifremi Unuttum | QUIZORA' },
   { pattern: '/reset-password', title: 'Yeni Şifre Belirle | QUIZORA' },
   { pattern: '/join', title: 'Oyuna Katıl | QUIZORA' },
+  { pattern: '/join/:pin', title: 'Oyuna Katıl | QUIZORA' },
   { pattern: '/explore', title: 'Quiz Keşfet | QUIZORA' },
   { pattern: '/explore/:quizId', title: 'Quiz Detayı | QUIZORA' },
   { pattern: '/host/:pin', title: 'Öğretmen Kontrol Merkezi | QUIZORA' },

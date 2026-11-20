@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto';
+import { ApiError, GoogleGenAI, Type, type Schema } from '@google/genai';
 import {
   AI_DIFFICULTY_LABELS,
   AI_LIMITS,
+  AI_PROVIDER_QUOTA_EXHAUSTED_MESSAGE,
   type AiDifficulty,
   type AiGenerationMethod,
   type AiServiceStatus,
@@ -14,6 +17,31 @@ import {
   sanitizeUserTextForPrompt,
   type AllowedTimeLimit,
 } from './aiQuestionValidator';
+
+/**
+ * Yalnızca Google Gemini ücretsiz katmanında kullanılabilen Flash modelleri.
+ * Kota aşımında dahi ücretli Pro / Ultra modellere otomatik geçiş yapılmaz.
+ */
+export const FREE_TIER_GEMINI_MODELS = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.8-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+] as const;
+
+export type FreeTierGeminiModel = (typeof FREE_TIER_GEMINI_MODELS)[number];
+
+export function selectSafeFreeTierModel(requested?: string): FreeTierGeminiModel {
+  const clean = (requested ?? '').trim().replace(/^models\//i, '');
+  if ((FREE_TIER_GEMINI_MODELS as readonly string[]).includes(clean)) {
+    return clean as FreeTierGeminiModel;
+  }
+  return FREE_TIER_GEMINI_MODELS[0];
+}
 
 export interface AiProviderGenerateInput {
   mode: AiGenerationMethod;
@@ -68,33 +96,33 @@ export interface CreateGeminiProviderOptions {
   model?: string;
   timeoutMs?: number;
   apiBaseUrl?: string;
-  fetchFn?: typeof fetch;
+  skipModelVerification?: boolean;
 }
 
-const GEMINI_QUESTION_SCHEMA = {
-  type: 'OBJECT',
+const GEMINI_QUESTION_SCHEMA: Schema = {
+  type: Type.OBJECT,
   properties: {
     type: {
-      type: 'STRING',
+      type: Type.STRING,
       enum: ['MULTIPLE_CHOICE', 'TRUE_FALSE', 'MULTI_SELECT', 'ORDERING'],
     },
-    text: { type: 'STRING' },
-    explanation: { type: 'STRING' },
-    allowPartialCredit: { type: 'BOOLEAN' },
-    timeLimitSec: { type: 'INTEGER' },
-    points: { type: 'INTEGER' },
+    text: { type: Type.STRING },
+    explanation: { type: Type.STRING },
+    allowPartialCredit: { type: Type.BOOLEAN },
+    timeLimitSec: { type: Type.INTEGER },
+    points: { type: Type.INTEGER },
     difficulty: {
-      type: 'STRING',
+      type: Type.STRING,
       enum: ['EASY', 'MEDIUM', 'HARD'],
     },
-    sourceReference: { type: 'STRING' },
+    sourceReference: { type: Type.STRING },
     options: {
-      type: 'ARRAY',
+      type: Type.ARRAY,
       items: {
-        type: 'OBJECT',
+        type: Type.OBJECT,
         properties: {
-          text: { type: 'STRING' },
-          isCorrect: { type: 'BOOLEAN' },
+          text: { type: Type.STRING },
+          isCorrect: { type: Type.BOOLEAN },
         },
         required: ['text', 'isCorrect'],
       },
@@ -111,22 +139,22 @@ const GEMINI_QUESTION_SCHEMA = {
   ],
 };
 
-const GEMINI_QUIZ_RESPONSE_SCHEMA = {
-  type: 'OBJECT',
+const GEMINI_QUIZ_RESPONSE_SCHEMA: Schema = {
+  type: Type.OBJECT,
   properties: {
-    title: { type: 'STRING' },
-    description: { type: 'STRING' },
-    category: { type: 'STRING' },
+    title: { type: Type.STRING },
+    description: { type: Type.STRING },
+    category: { type: Type.STRING },
     questions: {
-      type: 'ARRAY',
+      type: Type.ARRAY,
       items: GEMINI_QUESTION_SCHEMA,
     },
   },
   required: ['title', 'description', 'category', 'questions'],
 };
 
-const GEMINI_SINGLE_QUESTION_SCHEMA = {
-  type: 'OBJECT',
+const GEMINI_SINGLE_QUESTION_SCHEMA: Schema = {
+  type: Type.OBJECT,
   properties: {
     question: GEMINI_QUESTION_SCHEMA,
   },
@@ -138,10 +166,9 @@ function estimateGeminiCostUsd(
   promptTokens: number,
   outputTokens: number,
 ): number {
-  const isPro = model.toLowerCase().includes('pro');
-  // Yaklaşık liste fiyatları (USD / 1M token): Flash ~0.15/0.60, Pro ~1.25/5.00
-  const inputRatePerM = isPro ? 1.25 : 0.15;
-  const outputRatePerM = isPro ? 5.0 : 0.6;
+  const isLite = model.toLowerCase().includes('lite');
+  const inputRatePerM = isLite ? 0.075 : 0.15;
+  const outputRatePerM = isLite ? 0.3 : 0.6;
   const cost =
     (promptTokens * inputRatePerM + outputTokens * outputRatePerM) / 1_000_000;
   return Number(cost.toFixed(6));
@@ -261,28 +288,226 @@ function buildUserPromptForRegenerate(
   ].join('\n');
 }
 
+function mapGeminiSdkError(
+  err: unknown,
+  timedOut: boolean,
+  externalAborted: boolean,
+): AiDomainError {
+  if (err instanceof AiDomainError) {
+    return err;
+  }
+
+  if (timedOut) {
+    return new AiDomainError(
+      'AI_TIMEOUT',
+      'Yapay zekâ yanıt süresi zaman aşımına uğradı. Daha az soru veya daha kısa metinle tekrar deneyebilirsiniz.',
+      504,
+      true,
+    );
+  }
+
+  if (externalAborted) {
+    return new AiDomainError(
+      'AI_ABORTED',
+      'Yapay zekâ işlemi kullanıcı tarafından iptal edildi.',
+      408,
+      true,
+    );
+  }
+
+  const status =
+    err instanceof ApiError
+      ? err.status
+      : typeof (err as { status?: unknown })?.status === 'number'
+        ? ((err as { status: number }).status ?? 0)
+        : 0;
+  const rawMessage = err instanceof Error ? err.message : String(err ?? '');
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    /API_KEY_INVALID|API key not valid|invalid api key|PERMISSION_DENIED/i.test(
+      rawMessage,
+    )
+  ) {
+    return new AiDomainError(
+      'AI_AUTH_ERROR',
+      'Yapay zekâ API anahtarı geçersiz veya yetkisiz. Lütfen sunucu GEMINI_API_KEY yapılandırmasını kontrol edin.',
+      502,
+      false,
+    );
+  }
+
+  if (
+    status === 429 ||
+    /RESOURCE_EXHAUSTED|quota|rate.?limit|Too Many Requests/i.test(rawMessage)
+  ) {
+    return new AiDomainError(
+      'AI_PROVIDER_RATE_LIMIT',
+      AI_PROVIDER_QUOTA_EXHAUSTED_MESSAGE,
+      503,
+      true,
+    );
+  }
+
+  if (status === 400) {
+    return new AiDomainError(
+      'AI_PROVIDER_BAD_REQUEST',
+      'İstek yapay zekâ sağlayıcısı tarafından işlenemedi. Parametreleri kontrol edip tekrar deneyin.',
+      502,
+      false,
+    );
+  }
+
+  if (status >= 400) {
+    return new AiDomainError(
+      'AI_PROVIDER_ERROR',
+      `Yapay zekâ servisi geçici bir hata döndürdü (HTTP ${status}).`,
+      503,
+      true,
+    );
+  }
+
+  if (err instanceof Error && err.name === 'AbortError') {
+    return new AiDomainError(
+      'AI_TIMEOUT',
+      'Yapay zekâ yanıt süresi zaman aşımına uğradı. Daha az soru veya daha kısa metinle tekrar deneyebilirsiniz.',
+      504,
+      true,
+    );
+  }
+
+  return new AiDomainError(
+    'AI_NETWORK_ERROR',
+    'Yapay zekâ sağlayıcısına bağlanılamadı. Ağ bağlantısını kontrol edip tekrar deneyin.',
+    503,
+    true,
+  );
+}
+
+const MODEL_CACHE_TTL_MS = 15 * 60 * 1000;
+
+interface CachedModelEntry {
+  cacheKey: string;
+  model: FreeTierGeminiModel;
+  verified: boolean;
+  expiresAt: number;
+}
+
 export function createGeminiAiQuizProvider(
   options: CreateGeminiProviderOptions = {},
 ): AiQuizProvider {
+  let verifiedCache: CachedModelEntry | null = null;
+
   const resolveConfig = () => {
     const serverCfg = getServerConfig();
+    const preferredModel = selectSafeFreeTierModel(
+      options.model || serverCfg.geminiModel,
+    );
+    const customBaseUrl = options.apiBaseUrl
+      ? options.apiBaseUrl.trim().replace(/\/v1beta\/?$/i, '').replace(/\/$/, '')
+      : undefined;
+
     return {
       apiKey: options.apiKey !== undefined ? options.apiKey : serverCfg.geminiApiKey,
-      model: options.model || serverCfg.geminiModel,
+      preferredModel,
       timeoutMs: options.timeoutMs ?? serverCfg.aiRequestTimeoutMs,
-      apiBaseUrl: (
-        options.apiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta'
-      ).replace(/\/$/, ''),
-      fetchFn: options.fetchFn ?? globalThis.fetch,
+      customBaseUrl,
     };
   };
+
+  function createClient(apiKey: string, timeoutMs: number, customBaseUrl?: string) {
+    return new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        apiVersion: 'v1beta',
+        timeout: timeoutMs,
+        ...(customBaseUrl ? { baseUrl: customBaseUrl } : {}),
+      },
+    });
+  }
+
+  async function resolveVerifiedFreeModel(
+    ai: GoogleGenAI,
+    cfg: ReturnType<typeof resolveConfig>,
+    signal: AbortSignal,
+  ): Promise<{ model: FreeTierGeminiModel; verified: boolean }> {
+    if (options.skipModelVerification) {
+      return { model: cfg.preferredModel, verified: false };
+    }
+
+    const keyDigest = createHash('sha256').update(cfg.apiKey).digest('hex').slice(0, 12);
+    const cacheKey = `${keyDigest}:${cfg.customBaseUrl ?? 'default'}:${cfg.preferredModel}`;
+
+    if (
+      verifiedCache &&
+      verifiedCache.cacheKey === cacheKey &&
+      verifiedCache.expiresAt > Date.now()
+    ) {
+      return { model: verifiedCache.model, verified: verifiedCache.verified };
+    }
+
+    try {
+      const pager = await ai.models.list({
+        config: {
+          pageSize: 50,
+          abortSignal: signal,
+        },
+      });
+
+      const available = new Set<string>();
+      for (const m of pager.page ?? []) {
+        const shortName = (m.name ?? '').replace(/^models\//i, '').trim();
+        const supportsGenerate =
+          !m.supportedActions || m.supportedActions.includes('generateContent');
+        if (shortName && supportsGenerate) {
+          available.add(shortName);
+        }
+      }
+
+      if (available.size > 0) {
+        let selected: FreeTierGeminiModel = cfg.preferredModel;
+        if (!available.has(cfg.preferredModel)) {
+          const fallbackFree = FREE_TIER_GEMINI_MODELS.find((cand) =>
+            available.has(cand),
+          );
+          if (fallbackFree) {
+            selected = fallbackFree;
+          }
+        }
+
+        verifiedCache = {
+          cacheKey,
+          model: selected,
+          verified: available.has(selected),
+          expiresAt: Date.now() + MODEL_CACHE_TTL_MS,
+        };
+        return { model: selected, verified: available.has(selected) };
+      }
+    } catch (listErr) {
+      // Geçersiz API anahtarı veya kota hatası doğrudan kullanıcıya yansıtılır.
+      if (listErr instanceof ApiError) {
+        if (
+          listErr.status === 401 ||
+          listErr.status === 403 ||
+          listErr.status === 429 ||
+          /API_KEY_INVALID|API key not valid|RESOURCE_EXHAUSTED/i.test(listErr.message)
+        ) {
+          throw listErr;
+        }
+      }
+      // Minimal test sunucuları GET /v1beta/models desteklemeyebilir; güvenli ücretsiz adayla devam et.
+    }
+
+    return { model: cfg.preferredModel, verified: false };
+  }
 
   async function invokeGemini(params: {
     action: 'generate_quiz' | 'regenerate_question';
     mode: AiGenerationMethod;
     systemInstruction: string;
     userPrompt: string;
-    responseSchema: Record<string, unknown>;
+    responseSchema: Schema;
     temperature: number;
     externalSignal?: AbortSignal;
   }): Promise<AiProviderRawResult> {
@@ -320,88 +545,23 @@ export function createGeminiAiQuizProvider(
       controller.abort();
     }, cfg.timeoutMs);
 
-    const endpoint = `${cfg.apiBaseUrl}/models/${encodeURIComponent(cfg.model)}:generateContent`;
-
     try {
-      const response = await cfg.fetchFn(endpoint, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': cfg.apiKey,
+      const ai = createClient(cfg.apiKey, cfg.timeoutMs, cfg.customBaseUrl);
+      const resolved = await resolveVerifiedFreeModel(ai, cfg, controller.signal);
+
+      const response = await ai.models.generateContent({
+        model: resolved.model,
+        contents: params.userPrompt,
+        config: {
+          systemInstruction: params.systemInstruction,
+          temperature: params.temperature,
+          responseMimeType: 'application/json',
+          responseSchema: params.responseSchema,
+          abortSignal: controller.signal,
         },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: params.systemInstruction }],
-          },
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: params.userPrompt }],
-            },
-          ],
-          generationConfig: {
-            temperature: params.temperature,
-            responseMimeType: 'application/json',
-            responseSchema: params.responseSchema,
-          },
-        }),
       });
 
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          throw new AiDomainError(
-            'AI_AUTH_ERROR',
-            'Yapay zekâ API anahtarı reddedildi veya yetkisiz. Lütfen sunucu yapılandırmasını kontrol edin.',
-            502,
-            false,
-          );
-        }
-        if (response.status === 429) {
-          throw new AiDomainError(
-            'AI_PROVIDER_RATE_LIMIT',
-            'Yapay zekâ servisi şu anda yoğunluk veya kota sınırına ulaştı. Lütfen kısa bir süre sonra tekrar deneyin.',
-            503,
-            true,
-          );
-        }
-        if (response.status === 400) {
-          throw new AiDomainError(
-            'AI_PROVIDER_BAD_REQUEST',
-            'İstek yapay zekâ sağlayıcısı tarafından işlenemedi. Parametreleri kontrol edip tekrar deneyin.',
-            502,
-            false,
-          );
-        }
-        throw new AiDomainError(
-          'AI_PROVIDER_ERROR',
-          `Yapay zekâ servisi geçici bir hata döndürdü (HTTP ${response.status}).`,
-          503,
-          true,
-        );
-      }
-
-      const payload = (await response.json()) as {
-        candidates?: Array<{
-          content?: {
-            parts?: Array<{ text?: string }>;
-          };
-          finishReason?: string;
-        }>;
-        usageMetadata?: {
-          promptTokenCount?: number;
-          candidatesTokenCount?: number;
-          totalTokenCount?: number;
-        };
-      };
-
-      const candidate = payload.candidates?.[0];
-      const rawJsonText =
-        candidate?.content?.parts
-          ?.map((part) => part.text ?? '')
-          .join('')
-          .trim() ?? '';
-
+      const rawJsonText = (response.text ?? '').trim();
       if (!rawJsonText) {
         throw new AiDomainError(
           'AI_EMPTY_RESPONSE',
@@ -412,12 +572,12 @@ export function createGeminiAiQuizProvider(
       }
 
       const durationMs = Date.now() - startedAt;
-      const promptTokens = payload.usageMetadata?.promptTokenCount ?? 0;
-      const outputTokens = payload.usageMetadata?.candidatesTokenCount ?? 0;
+      const promptTokens = response.usageMetadata?.promptTokenCount ?? 0;
+      const outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0;
       const totalTokens =
-        payload.usageMetadata?.totalTokenCount ?? promptTokens + outputTokens;
+        response.usageMetadata?.totalTokenCount ?? promptTokens + outputTokens;
       const estimatedCostUsd = estimateGeminiCostUsd(
-        cfg.model,
+        resolved.model,
         promptTokens,
         outputTokens,
       );
@@ -425,7 +585,8 @@ export function createGeminiAiQuizProvider(
       logger.info('ai_usage', {
         action: params.action,
         mode: params.mode,
-        model: cfg.model,
+        model: resolved.model,
+        verifiedFreeTier: resolved.verified,
         promptTokens,
         outputTokens,
         totalTokens,
@@ -436,7 +597,7 @@ export function createGeminiAiQuizProvider(
       return {
         rawJsonText,
         usage: {
-          model: cfg.model,
+          model: resolved.model,
           promptTokens,
           outputTokens,
           totalTokens,
@@ -445,33 +606,10 @@ export function createGeminiAiQuizProvider(
         },
       };
     } catch (err) {
-      if (err instanceof AiDomainError) {
-        throw err;
-      }
-
-      if (timedOut) {
-        throw new AiDomainError(
-          'AI_TIMEOUT',
-          'Yapay zekâ yanıt süresi zaman aşımına uğradı. Daha az soru veya daha kısa metinle tekrar deneyebilirsiniz.',
-          504,
-          true,
-        );
-      }
-
-      if (params.externalSignal?.aborted) {
-        throw new AiDomainError(
-          'AI_ABORTED',
-          'Yapay zekâ işlemi kullanıcı tarafından iptal edildi.',
-          408,
-          true,
-        );
-      }
-
-      throw new AiDomainError(
-        'AI_NETWORK_ERROR',
-        'Yapay zekâ sağlayıcısına bağlanılamadı. Ağ bağlantısını kontrol edip tekrar deneyin.',
-        503,
-        true,
+      throw mapGeminiSdkError(
+        err,
+        timedOut,
+        Boolean(params.externalSignal?.aborted),
       );
     } finally {
       clearTimeout(timeoutHandle);
@@ -482,10 +620,16 @@ export function createGeminiAiQuizProvider(
   return {
     getStatus(): AiServiceStatus {
       const cfg = resolveConfig();
+      const activeModel =
+        verifiedCache && verifiedCache.expiresAt > Date.now()
+          ? verifiedCache.model
+          : cfg.preferredModel;
       return {
         configured: Boolean(cfg.apiKey),
         provider: 'google-gemini',
-        model: cfg.model,
+        sdk: '@google/genai',
+        model: activeModel,
+        verifiedFreeTierModel: Boolean(verifiedCache?.verified),
         ocrSupported: false,
         maxPdfSizeBytes: AI_LIMITS.MAX_PDF_SIZE_BYTES,
         minQuestions: AI_LIMITS.MIN_QUESTIONS,
@@ -494,6 +638,7 @@ export function createGeminiAiQuizProvider(
         minTextWords: AI_LIMITS.MIN_TEXT_WORDS,
         maxTextChars: AI_LIMITS.MAX_TEXT_CHARS,
         rateLimitPerHour: AI_LIMITS.RATE_LIMIT_GENERATIONS_PER_HOUR,
+        dailyLimit: AI_LIMITS.DAILY_QUIZ_LIMIT,
       };
     },
 

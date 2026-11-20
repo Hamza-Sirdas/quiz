@@ -32,6 +32,8 @@ export interface CreateServerAppOptions extends GameManagerOptions {
   emailSender?: EmailSender;
   aiQuizProvider?: AiQuizProvider;
   aiRateLimitMax?: number;
+  aiDailyLimitMax?: number;
+  aiNowFn?: () => Date;
 }
 
 export function createServerApp(options: CreateServerAppOptions = {}) {
@@ -114,6 +116,8 @@ export function createServerApp(options: CreateServerAppOptions = {}) {
     createAiRouter({
       aiQuizProvider: options.aiQuizProvider,
       rateLimitMax: options.aiRateLimitMax,
+      dailyLimitMax: options.aiDailyLimitMax,
+      nowFn: options.aiNowFn,
     }),
   );
 

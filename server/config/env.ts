@@ -36,7 +36,7 @@ export function getServerConfig() {
   const emailFrom = process.env.EMAIL_FROM?.trim() || '';
 
   const geminiApiKey = process.env.GEMINI_API_KEY?.trim() || '';
-  const geminiModel = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
+  const geminiModel = process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite';
   const rawAiTimeout = Number(process.env.AI_REQUEST_TIMEOUT_MS || 45000);
   const aiRequestTimeoutMs = Number.isFinite(rawAiTimeout)
     ? Math.max(5000, Math.min(120000, Math.floor(rawAiTimeout)))

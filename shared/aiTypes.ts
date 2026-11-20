@@ -60,8 +60,9 @@ export const AI_LANGUAGES = [
 ] as const;
 
 export const AI_LIMITS = {
-  MIN_QUESTIONS: 5,
-  MAX_QUESTIONS: 30,
+  DAILY_QUIZ_LIMIT: 5,
+  MIN_QUESTIONS: 1,
+  MAX_QUESTIONS: 10,
   MIN_TOPIC_CHARS: 3,
   MAX_TOPIC_CHARS: 200,
   MAX_PDF_SIZE_BYTES: 10 * 1024 * 1024,
@@ -74,10 +75,26 @@ export const AI_LIMITS = {
   RATE_LIMIT_PDF_EXTRACTIONS_PER_HOUR: 20,
 } as const;
 
+export const AI_DAILY_LIMIT_EXHAUSTED_MESSAGE =
+  'Bugünkü 5 yapay zekâ ile quiz oluşturma hakkını kullandın. Hakların yarın yenilenecek.';
+
+export const AI_PROVIDER_QUOTA_EXHAUSTED_MESSAGE =
+  'Yapay zekâ hizmeti geçici olarak kullanım sınırına ulaştı. Lütfen daha sonra tekrar dene.';
+
+export interface AiDailyQuotaStatus {
+  dailyLimit: number;
+  usedToday: number;
+  remainingToday: number;
+  usageDate: string; // "YYYY-MM-DD" (Europe/Istanbul)
+  timezone: 'Europe/Istanbul';
+}
+
 export interface AiServiceStatus {
   configured: boolean;
   provider: 'google-gemini';
+  sdk: '@google/genai';
   model: string;
+  verifiedFreeTierModel: boolean;
   ocrSupported: false;
   maxPdfSizeBytes: number;
   minQuestions: number;
@@ -86,6 +103,8 @@ export interface AiServiceStatus {
   minTextWords: number;
   maxTextChars: number;
   rateLimitPerHour: number;
+  dailyLimit: number;
+  dailyQuota?: AiDailyQuotaStatus;
 }
 
 export interface PdfExtractionSummary {

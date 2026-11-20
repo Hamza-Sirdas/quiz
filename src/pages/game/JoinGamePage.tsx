@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { ValidatePinResponse } from '@shared/gameTypes';
 import { QuizoraLogo } from '@/components/brand/QuizoraLogo';
 import { AlertCircleIcon, ChevronLeftIcon } from '@/components/ui/Icons';
@@ -12,8 +12,11 @@ import { formatPinDisplay, savePlayerToken } from '@/utils/gameStorage';
 
 export function JoinGamePage() {
   const navigate = useNavigate();
+  const { pin: paramPin } = useParams<{ pin?: string }>();
   const [searchParams] = useSearchParams();
-  const initialPin = (searchParams.get('pin') ?? '').replace(/\D/g, '').slice(0, 6);
+  const initialPin = (paramPin ?? searchParams.get('pin') ?? '')
+    .replace(/\D/g, '')
+    .slice(0, 6);
 
   const isOnline = useNetworkStatus();
   const [pin, setPin] = useState(initialPin);
@@ -324,7 +327,7 @@ export function JoinGamePage() {
                   disabled={joining}
                   className="w-full min-h-12 rounded-xl bg-burgundy-600 hover:bg-burgundy-700 px-5 py-3 text-base font-semibold text-cream-50 transition-colors duration-150 cursor-pointer disabled:opacity-60"
                 >
-                  {joining ? 'Katılıyor...' : 'Katıl'}
+                  {joining ? 'Katılıyor...' : 'Yarışmaya Katıl'}
                 </button>
 
                 <button

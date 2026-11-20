@@ -1,4 +1,5 @@
 import type {
+  AiDailyQuotaStatus,
   AiGenerateRequest,
   AiGeneratedQuestion,
   AiGeneratedQuizDraft,
@@ -107,8 +108,16 @@ export function deletePdfSession(pdfSessionId: string): Promise<{ deleted: boole
 export function generateAiQuiz(
   payload: AiGenerateRequest,
   signal?: AbortSignal,
-): Promise<{ draft: AiGeneratedQuizDraft; usage: AiUsageSummary }> {
-  return requestAiJson<{ draft: AiGeneratedQuizDraft; usage: AiUsageSummary }>(
+): Promise<{
+  draft: AiGeneratedQuizDraft;
+  usage: AiUsageSummary;
+  dailyQuota?: AiDailyQuotaStatus;
+}> {
+  return requestAiJson<{
+    draft: AiGeneratedQuizDraft;
+    usage: AiUsageSummary;
+    dailyQuota?: AiDailyQuotaStatus;
+  }>(
     '/api/ai/generate',
     {
       method: 'POST',

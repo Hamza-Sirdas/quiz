@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-server
+.env
+.env.local
+.env.*.local
+*.local
+backups
+test-results
+playwright-report
+e2e
+tests
+.git

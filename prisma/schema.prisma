@@ -51,6 +51,7 @@ model Teacher {
   passwordResetTokens PasswordResetToken[]
   quizzes             Quiz[]
   gameSessions        GameSession[]
+  aiDailyUsages       TeacherAiDailyUsage[]
 }
 
 model TeacherSession {
@@ -235,4 +236,20 @@ model GameResult {
   participant    GameParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, rank])
+}
+
+model TeacherAiDailyUsage {
+  id          String   @id @default(cuid())
+  teacherId   String
+  usageDate   String   @db.VarChar(10) // "YYYY-MM-DD" (Europe/Istanbul)
+  usedCount   Int      @default(0)
+  inFlight    Int      @default(0)
+  lastModel   String?  @db.VarChar(80)
+  totalTokens Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  teacher     Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, usageDate])
+  @@index([teacherId, usageDate])
 }

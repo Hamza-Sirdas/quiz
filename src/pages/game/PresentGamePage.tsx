@@ -23,7 +23,7 @@ import {
   UsersIcon,
 } from '@/components/ui/Icons';
 import { SafeImage } from '@/components/ui/SafeImage';
-import { resolveMediaUrl } from '@/config/runtime';
+import { buildGameJoinUrl, resolveMediaUrl } from '@/config/runtime';
 import { useGameSound } from '@/hooks/useGameSound';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
@@ -101,10 +101,7 @@ export function PresentGamePage() {
   };
 
   const presenterToken = tokenFromQuery || readPresenterToken(pin);
-  const joinUrl =
-    typeof window !== 'undefined'
-      ? `${window.location.origin}/join?pin=${pin}`
-      : `/join?pin=${pin}`;
+  const joinUrl = buildGameJoinUrl(pin);
 
   useEffect(() => {
     if (tokenFromQuery && /^\d{6}$/.test(pin)) {

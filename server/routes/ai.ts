@@ -13,6 +13,12 @@ import {
   QUIZ_CATEGORIES,
 } from '../schemas/quizSchema';
 import {
+  commitDailyQuotaSlot,
+  getTeacherDailyQuotaStatus,
+  releaseDailyQuotaSlot,
+  reserveDailyQuotaSlot,
+} from '../services/aiDailyQuotaService';
+import {
   AiDomainError,
   parseAndValidateAiQuizOutput,
   parseAndValidateSingleAiQuestion,
@@ -33,6 +39,9 @@ export interface CreateAiRouterOptions {
   aiQuizProvider?: AiQuizProvider;
   pdfSessionStore?: PdfSessionStore;
   rateLimitMax?: number;
+  dailyLimitMax?: number;
+  maxConcurrentGlobal?: number;
+  nowFn?: () => Date;
 }
 
 const timeLimitSchema = z
@@ -132,12 +141,17 @@ export function createAiRouter(options: CreateAiRouterOptions = {}): Router {
   const router = Router();
   const provider = options.aiQuizProvider ?? createGeminiAiQuizProvider();
   const pdfSessions = options.pdfSessionStore ?? new PdfSessionStore();
+  const getNow = options.nowFn ?? (() => new Date());
 
   const limiter = new SlidingWindowLimiter();
   const inFlightTeachers = new Set<string>();
+  let globalInFlightCount = 0;
+  const maxGlobalInFlight = options.maxConcurrentGlobal ?? 5;
   const hourWindowMs = 60 * 60 * 1000;
   const maxGenPerHour =
     options.rateLimitMax ?? AI_LIMITS.RATE_LIMIT_GENERATIONS_PER_HOUR;
+  const dailyLimitMax =
+    options.dailyLimitMax ?? AI_LIMITS.DAILY_QUIZ_LIMIT;
   const maxRegenPerHour = Math.max(
     AI_LIMITS.RATE_LIMIT_REGENERATIONS_PER_HOUR,
     maxGenPerHour * 2,
@@ -149,11 +163,20 @@ export function createAiRouter(options: CreateAiRouterOptions = {}): Router {
 
   router.use(requireTeacher);
 
-  router.get('/status', (_req, res) => {
+  router.get('/status', async (req, res) => {
+    const teacherId = req.teacher!.id;
     const status = provider.getStatus();
+    const dailyQuota = await getTeacherDailyQuotaStatus(
+      teacherId,
+      dailyLimitMax,
+      getNow(),
+    );
+
     res.json({
       ...status,
       rateLimitPerHour: maxGenPerHour,
+      dailyLimit: dailyLimitMax,
+      dailyQuota,
     });
   });
 
@@ -284,16 +307,26 @@ export function createAiRouter(options: CreateAiRouterOptions = {}): Router {
       return;
     }
 
-    if (inFlightTeachers.has(teacherId)) {
-      res.status(409).json({
-        code: 'GENERATION_IN_PROGRESS',
+    if (globalInFlightCount >= maxGlobalInFlight) {
+      res.status(503).json({
+        code: 'AI_SERVER_BUSY',
         message:
-          'Devam eden bir yapay zekâ quiz oluşturma işleminiz zaten var. Lütfen tamamlanmasını bekleyin veya iptal edin.',
+          'Yapay zekâ servisi şu anda yoğun. Lütfen birkaç saniye sonra tekrar deneyin.',
       });
       return;
     }
 
+    // Atomik DB günlük kota + eşzamanlı istek kilidi (yalnızca başarılı olunca hak düşer)
+    const { usageDate } = await reserveDailyQuotaSlot(
+      teacherId,
+      dailyLimitMax,
+      getNow(),
+    );
+
     inFlightTeachers.add(teacherId);
+    globalInFlightCount += 1;
+    let committed = false;
+
     const abortController = new AbortController();
     const onClose = () => {
       if (!res.writableFinished) {
@@ -334,13 +367,26 @@ export function createAiRouter(options: CreateAiRouterOptions = {}): Router {
         fallbackTitle,
       });
 
+      const dailyQuota = await commitDailyQuotaSlot(
+        teacherId,
+        usageDate,
+        rawResult.usage,
+        dailyLimitMax,
+      );
+      committed = true;
+
       res.json({
         draft,
         usage: rawResult.usage,
+        dailyQuota,
       });
     } finally {
       res.off('close', onClose);
       inFlightTeachers.delete(teacherId);
+      globalInFlightCount = Math.max(0, globalInFlightCount - 1);
+      if (!committed) {
+        await releaseDailyQuotaSlot(teacherId, usageDate);
+      }
     }
   });
 
@@ -395,15 +441,25 @@ export function createAiRouter(options: CreateAiRouterOptions = {}): Router {
         return;
       }
 
-      if (inFlightTeachers.has(teacherId)) {
-        res.status(409).json({
-          code: 'GENERATION_IN_PROGRESS',
-          message: 'Devam eden bir yapay zekâ işleminiz zaten var.',
+      if (globalInFlightCount >= maxGlobalInFlight) {
+        res.status(503).json({
+          code: 'AI_SERVER_BUSY',
+          message:
+            'Yapay zekâ servisi şu anda yoğun. Lütfen birkaç saniye sonra tekrar deneyin.',
         });
         return;
       }
 
+      const { usageDate } = await reserveDailyQuotaSlot(
+        teacherId,
+        dailyLimitMax,
+        getNow(),
+      );
+
       inFlightTeachers.add(teacherId);
+      globalInFlightCount += 1;
+      let committed = false;
+
       const abortController = new AbortController();
       const onClose = () => {
         if (!res.writableFinished) {
@@ -446,16 +502,29 @@ export function createAiRouter(options: CreateAiRouterOptions = {}): Router {
           fallbackTitle: extracted.fileName.replace(/\.pdf$/i, '').slice(0, 120),
         });
 
+        const dailyQuota = await commitDailyQuotaSlot(
+          teacherId,
+          usageDate,
+          rawResult.usage,
+          dailyLimitMax,
+        );
+        committed = true;
+
         const summary = pdfSessions.create(teacherId, extracted);
 
         res.json({
           draft,
           extraction: summary,
           usage: rawResult.usage,
+          dailyQuota,
         });
       } finally {
         res.off('close', onClose);
         inFlightTeachers.delete(teacherId);
+        globalInFlightCount = Math.max(0, globalInFlightCount - 1);
+        if (!committed) {
+          await releaseDailyQuotaSlot(teacherId, usageDate);
+        }
       }
     },
   );
@@ -530,6 +599,15 @@ export function createAiRouter(options: CreateAiRouterOptions = {}): Router {
       return;
     }
 
+    if (inFlightTeachers.has(teacherId)) {
+      res.status(409).json({
+        code: 'GENERATION_IN_PROGRESS',
+        message: 'Devam eden başka bir yapay zekâ işleminiz var. Lütfen tamamlanmasını bekleyin.',
+      });
+      return;
+    }
+
+    inFlightTeachers.add(teacherId);
     const abortController = new AbortController();
     const onClose = () => {
       if (!res.writableFinished) {
@@ -581,6 +659,7 @@ export function createAiRouter(options: CreateAiRouterOptions = {}): Router {
       });
     } finally {
       res.off('close', onClose);
+      inFlightTeachers.delete(teacherId);
     }
   });
 

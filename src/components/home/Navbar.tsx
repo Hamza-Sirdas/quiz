@@ -2,22 +2,54 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { QuizoraLogo } from '@/components/brand/QuizoraLogo';
+import { EASE_OUT_EXPO } from '@/components/home/motion/tokens';
 import { CloseIcon, MenuIcon } from '@/components/ui/Icons';
 import { useAuth } from '@/context/AuthContext';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { cn } from '@/utils/cn';
 
-export type HomeSectionId = 'ana-sayfa' | 'ozellikler';
+export type HomeSectionId =
+  | 'ana-sayfa'
+  | 'mini-quiz'
+  | 'nasil-calisir'
+  | 'canli-vitrin'
+  | 'ozellikler';
 
 interface NavbarProps {
   activeSection: HomeSectionId;
   onSelectSection: (section: HomeSectionId) => void;
 }
 
+const mobileListVariants = {
+  hidden: {},
+  visible: {
+    transition: { staggerChildren: 0.035, delayChildren: 0.02 },
+  },
+};
+
+const mobileItemVariants = {
+  hidden: { opacity: 0, x: -8 },
+  visible: {
+    opacity: 1,
+    x: 0,
+    transition: { duration: 0.2, ease: EASE_OUT_EXPO },
+  },
+};
+
 export function Navbar({ activeSection, onSelectSection }: NavbarProps) {
   const { teacher } = useAuth();
   const reducedMotion = usePrefersReducedMotion();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => {
+      setScrolled(window.scrollY > 16);
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -42,17 +74,24 @@ export function Navbar({ activeSection, onSelectSection }: NavbarProps) {
 
   const navLinkClass = (isActive: boolean) =>
     cn(
-      'py-1.5 text-sm transition-[color] duration-150 border-b-2',
+      'q-navlink q-focus inline-flex items-center min-h-9 px-3.5 py-1.5 rounded-xl text-sm transition-colors duration-150 border',
       isActive
-        ? 'border-navy-900 font-semibold text-navy-900'
-        : 'border-transparent font-medium text-navy-700 hover:text-navy-900',
+        ? 'bg-cream-50 border-burgundy-600/35 text-burgundy-700 font-semibold shadow-xs'
+        : 'border-transparent font-medium text-navy-700 hover:text-navy-900 hover:bg-cream-50/60',
     );
 
   const authDestination = teacher ? '/dashboard' : '/login';
   const authLabel = teacher ? 'Öğretmen Paneli' : 'Oturum Aç';
 
   return (
-    <header className="sticky top-0 z-30 bg-powder-300 border-b border-navy-900/10">
+    <header
+      className={cn(
+        'sticky top-0 z-30 transition-[background-color,border-color,box-shadow,padding] duration-200',
+        scrolled
+          ? 'bg-cream-50/95 backdrop-blur-md border-b border-cream-300 shadow-card py-2.5'
+          : 'bg-powder-300/95 border-b border-navy-900/10 py-3.5',
+      )}
+    >
       <a
         href="#ana-sayfa-baslik"
         className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-navy-900 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-cream-50"
@@ -60,22 +99,31 @@ export function Navbar({ activeSection, onSelectSection }: NavbarProps) {
         İçeriğe geç
       </a>
 
-      <div className="max-w-6xl mx-auto px-5 sm:px-6 lg:px-8 min-h-18 py-3 flex items-center justify-between gap-4">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3 sm:gap-4">
         <a
           href="#ana-sayfa"
           onClick={(event) => {
             event.preventDefault();
             handleSectionSelect('ana-sayfa');
           }}
-          className="shrink-0 rounded-lg"
+          className="q-focus shrink-0 rounded-lg inline-flex items-center"
           aria-label="QUIZORA Ana Sayfa"
         >
           <QuizoraLogo size="md" />
         </a>
 
-        <nav aria-label="Birincil" className="hidden lg:flex items-center gap-7">
+        <nav
+          aria-label="Birincil"
+          className={cn(
+            'hidden lg:flex items-center gap-1 rounded-2xl border px-1.5 py-1 transition-colors duration-200',
+            scrolled
+              ? 'bg-cream-100 border-cream-300'
+              : 'bg-cream-50/55 border-navy-900/10',
+          )}
+        >
           <a
             href="#ana-sayfa"
+            aria-current={activeSection === 'ana-sayfa' ? 'page' : undefined}
             onClick={(event) => {
               event.preventDefault();
               handleSectionSelect('ana-sayfa');
@@ -89,6 +137,7 @@ export function Navbar({ activeSection, onSelectSection }: NavbarProps) {
           </Link>
           <a
             href="#ozellikler"
+            aria-current={activeSection === 'ozellikler' ? 'page' : undefined}
             onClick={() => handleSectionSelect('ozellikler')}
             className={navLinkClass(activeSection === 'ozellikler')}
           >
@@ -99,36 +148,29 @@ export function Navbar({ activeSection, onSelectSection }: NavbarProps) {
           </Link>
         </nav>
 
-        <div className="hidden lg:flex items-center gap-3">
-          <motion.div
-            whileHover={reducedMotion ? undefined : { y: -1 }}
-            whileTap={reducedMotion ? undefined : { scale: 0.99 }}
-            transition={{ duration: 0.2 }}
+        <div className="hidden lg:flex items-center gap-2.5 shrink-0">
+          <Link
+            to={authDestination}
+            className={cn(
+              'q-press q-focus inline-flex items-center justify-center min-h-10 rounded-xl border px-4 py-2 text-sm font-semibold',
+              scrolled
+                ? 'border-cream-300 bg-cream-100 hover:bg-cream-200 text-navy-900'
+                : 'border-navy-700/75 bg-cream-50/50 hover:bg-cream-50/85 text-navy-900',
+            )}
           >
-            <Link
-              to={authDestination}
-              className="inline-flex items-center justify-center rounded-xl border border-navy-700/75 bg-cream-50/35 hover:bg-cream-50/75 px-4 py-2 text-sm font-semibold text-navy-900 transition-colors duration-200"
-            >
-              {authLabel}
-            </Link>
-          </motion.div>
-          <motion.div
-            whileHover={reducedMotion ? undefined : { y: -1 }}
-            whileTap={reducedMotion ? undefined : { scale: 0.99 }}
-            transition={{ duration: 0.2 }}
+            {authLabel}
+          </Link>
+          <Link
+            to="/dashboard/quizzes/new"
+            className="q-press q-focus inline-flex items-center justify-center min-h-10 rounded-xl bg-burgundy-600 hover:bg-burgundy-700 px-4.5 py-2 text-sm font-semibold text-cream-50 shadow-xs"
           >
-            <Link
-              to="/dashboard/quizzes/new"
-              className="inline-flex items-center justify-center rounded-xl bg-burgundy-600 hover:bg-burgundy-700 px-5 py-2.5 text-sm font-semibold text-cream-50 transition-colors duration-200"
-            >
-              Quiz Oluştur
-            </Link>
-          </motion.div>
+            Quiz Oluştur
+          </Link>
         </div>
 
         <button
           type="button"
-          className="lg:hidden inline-flex items-center justify-center min-w-11 min-h-11 rounded-xl border border-navy-900/20 bg-cream-50/45 text-navy-900 hover:bg-cream-50/80 transition-colors duration-200 cursor-pointer"
+          className="q-press q-focus lg:hidden inline-flex items-center justify-center min-w-11 min-h-11 rounded-xl border border-navy-900/20 bg-cream-50/65 text-navy-900 hover:bg-cream-50 cursor-pointer shrink-0"
           aria-expanded={mobileOpen}
           aria-controls="mobil-menu"
           aria-label={mobileOpen ? 'Menüyü kapat' : 'Menüyü aç'}
@@ -145,72 +187,103 @@ export function Navbar({ activeSection, onSelectSection }: NavbarProps) {
             initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -8 }}
-            transition={{ duration: reducedMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
-            className="lg:hidden bg-cream-50 border-t border-cream-300 border-b border-b-cream-300 shadow-card"
+            transition={{
+              duration: reducedMotion ? 0 : 0.22,
+              ease: EASE_OUT_EXPO,
+            }}
+            className="lg:hidden mt-2 bg-cream-50 border-t border-cream-300 border-b border-b-cream-300 shadow-card"
           >
-            <nav
+            <motion.nav
               aria-label="Mobil gezinme"
-              className="max-w-6xl mx-auto px-5 sm:px-6 py-4 flex flex-col gap-1"
+              variants={reducedMotion ? undefined : mobileListVariants}
+              initial={reducedMotion ? false : 'hidden'}
+              animate="visible"
+              className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex flex-col gap-1.5"
             >
-              <a
+              <motion.a
+                variants={reducedMotion ? undefined : mobileItemVariants}
                 href="#ana-sayfa"
+                aria-current={activeSection === 'ana-sayfa' ? 'page' : undefined}
                 onClick={(event) => {
                   event.preventDefault();
                   handleSectionSelect('ana-sayfa');
                 }}
                 className={cn(
-                  'rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors duration-200',
+                  'q-focus rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors duration-200',
                   activeSection === 'ana-sayfa'
-                    ? 'bg-powder-100 text-burgundy-600 font-semibold'
+                    ? 'bg-powder-100 border border-powder-300 text-burgundy-700 font-semibold'
                     : 'text-navy-900 hover:bg-cream-200',
                 )}
               >
                 Ana Sayfa
-              </a>
-              <Link
-                to="/explore"
-                onClick={() => setMobileOpen(false)}
-                className="rounded-xl px-3.5 py-2.5 text-sm font-medium text-navy-900 hover:bg-cream-200 transition-colors duration-200"
+              </motion.a>
+              <motion.div variants={reducedMotion ? undefined : mobileItemVariants}>
+                <Link
+                  to="/explore"
+                  onClick={() => setMobileOpen(false)}
+                  className="q-focus block rounded-xl px-3.5 py-2.5 text-sm font-medium text-navy-900 hover:bg-cream-200 transition-colors duration-200"
+                >
+                  Keşfet
+                </Link>
+              </motion.div>
+              <motion.a
+                variants={reducedMotion ? undefined : mobileItemVariants}
+                href="#mini-quiz"
+                aria-current={activeSection === 'mini-quiz' ? 'page' : undefined}
+                onClick={() => handleSectionSelect('mini-quiz')}
+                className={cn(
+                  'q-focus rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors duration-200',
+                  activeSection === 'mini-quiz'
+                    ? 'bg-powder-100 border border-powder-300 text-burgundy-700 font-semibold'
+                    : 'text-navy-900 hover:bg-cream-200',
+                )}
               >
-                Keşfet
-              </Link>
-              <a
+                Etkileşimli Mini Quiz
+              </motion.a>
+              <motion.a
+                variants={reducedMotion ? undefined : mobileItemVariants}
                 href="#ozellikler"
+                aria-current={activeSection === 'ozellikler' ? 'page' : undefined}
                 onClick={() => handleSectionSelect('ozellikler')}
                 className={cn(
-                  'rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors duration-200',
+                  'q-focus rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors duration-200',
                   activeSection === 'ozellikler'
-                    ? 'bg-powder-100 text-burgundy-600 font-semibold'
+                    ? 'bg-powder-100 border border-powder-300 text-burgundy-700 font-semibold'
                     : 'text-navy-900 hover:bg-cream-200',
                 )}
               >
                 Özellikler
-              </a>
-              <Link
-                to="/dashboard/quizzes"
-                onClick={() => setMobileOpen(false)}
-                className="rounded-xl px-3.5 py-2.5 text-sm font-medium text-navy-900 hover:bg-cream-200 transition-colors duration-200"
-              >
-                Sınıf Modu
-              </Link>
+              </motion.a>
+              <motion.div variants={reducedMotion ? undefined : mobileItemVariants}>
+                <Link
+                  to="/dashboard/quizzes"
+                  onClick={() => setMobileOpen(false)}
+                  className="q-focus block rounded-xl px-3.5 py-2.5 text-sm font-medium text-navy-900 hover:bg-cream-200 transition-colors duration-200"
+                >
+                  Sınıf Modu
+                </Link>
+              </motion.div>
 
-              <div className="mt-3 pt-3 border-t border-cream-300 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <motion.div
+                variants={reducedMotion ? undefined : mobileItemVariants}
+                className="mt-3 pt-3 border-t border-cream-300 grid grid-cols-1 sm:grid-cols-2 gap-2.5"
+              >
                 <Link
                   to={authDestination}
                   onClick={() => setMobileOpen(false)}
-                  className="inline-flex w-full items-center justify-center rounded-xl border border-navy-700/75 bg-cream-100 hover:bg-cream-200 px-4 py-2.5 text-sm font-semibold text-navy-900 transition-colors duration-200"
+                  className="q-press q-focus inline-flex w-full min-h-11 items-center justify-center rounded-xl border border-navy-700/75 bg-cream-100 hover:bg-cream-200 px-4 py-2.5 text-sm font-semibold text-navy-900"
                 >
                   {authLabel}
                 </Link>
                 <Link
                   to="/dashboard/quizzes/new"
                   onClick={() => setMobileOpen(false)}
-                  className="inline-flex w-full items-center justify-center rounded-xl bg-burgundy-600 hover:bg-burgundy-700 px-4 py-2.5 text-sm font-semibold text-cream-50 transition-colors duration-200"
+                  className="q-press q-focus inline-flex w-full min-h-11 items-center justify-center rounded-xl bg-burgundy-600 hover:bg-burgundy-700 px-4 py-2.5 text-sm font-semibold text-cream-50"
                 >
                   Quiz Oluştur
                 </Link>
-              </div>
-            </nav>
+              </motion.div>
+            </motion.nav>
           </motion.div>
         )}
       </AnimatePresence>

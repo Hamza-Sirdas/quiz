@@ -18,6 +18,7 @@ import {
 import { ApiError, updateQuizShareSettings } from '@/services/quizApi';
 import type { QuizShareState } from '@/types/quiz';
 import { cn } from '@/utils/cn';
+import { getPublicAppOrigin } from '@/config/runtime';
 import { handleLightDismissBackdropClick } from '@/utils/dialogLightDismiss';
 
 export interface ShareableQuizTarget {
@@ -122,8 +123,7 @@ export function QuizShareModal({
     );
   }
 
-  const origin =
-    typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
+  const origin = getPublicAppOrigin();
 
   const shareUrl =
     visibility === 'PRIVATE'

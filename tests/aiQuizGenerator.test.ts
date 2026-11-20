@@ -21,7 +21,10 @@ import type {
 } from '../shared/gameTypes';
 import { createServerApp } from '../server/app';
 import { prisma } from '../server/lib/prisma';
-import { sanitizeUserTextForPrompt } from '../server/services/aiQuestionValidator';
+import {
+  AiDomainError,
+  sanitizeUserTextForPrompt,
+} from '../server/services/aiQuestionValidator';
 import {
   createGeminiAiQuizProvider,
   type AiProviderGenerateInput,
@@ -344,15 +347,18 @@ describe('Aşama 12: Yapay Zekâ Destekli Quiz Oluşturma, PDF İşleme, Kalite 
     getStatus: () => ({
       configured: true,
       provider: 'google-gemini',
+      sdk: '@google/genai',
       model: 'gemini-2.5-flash',
+      verifiedFreeTierModel: true,
       ocrSupported: false,
       maxPdfSizeBytes: 10 * 1024 * 1024,
-      minQuestions: 5,
-      maxQuestions: 30,
+      minQuestions: 1,
+      maxQuestions: 10,
       minTextChars: 120,
       minTextWords: 20,
       maxTextChars: 40_000,
       rateLimitPerHour: 30,
+      dailyLimit: 5,
     }),
     generateQuiz: (input) => behaviorHandler('generate', input),
     regenerateQuestion: (input) => behaviorHandler('regenerate', input),
@@ -361,6 +367,7 @@ describe('Aşama 12: Yapay Zekâ Destekli Quiz Oluşturma, PDF İşleme, Kalite 
   const { httpServer, gameManager, io } = createServerApp({
     aiQuizProvider: mockProvider,
     aiRateLimitMax: 25,
+    aiDailyLimitMax: 50,
     countdownMs: 60,
     questionGraceMs: 40,
   });
@@ -512,9 +519,9 @@ describe('Aşama 12: Yapay Zekâ Destekli Quiz Oluşturma, PDF İşleme, Kalite 
     }
   });
 
-  it('3. Konudan quiz oluşturma, farklı soru sayıları (5, 15, 30 ve sınır reddi), zorluklar (EASY/MEDIUM/HARD/MIXED) ve tüm 4 soru türünü üretir', async () => {
-    // Sınır dışı soru sayıları (4 ve 31) reddedilmeli
-    for (const invalidCount of [4, 31]) {
+  it('3. Konudan quiz oluşturma, soru sayısı sınırları (1-10 ve sınır reddi), zorluklar (EASY/MEDIUM/HARD/MIXED) ve tüm 4 soru türünü üretir', async () => {
+    // Sınır dışı soru sayıları (0 ve 11) reddedilmeli
+    for (const invalidCount of [0, 11]) {
       const badRes = await fetch(`${baseUrl}/api/ai/generate`, {
         method: 'POST',
         headers: {
@@ -584,10 +591,10 @@ describe('Aşama 12: Yapay Zekâ Destekli Quiz Oluşturma, PDF İşleme, Kalite 
     ]);
     expect(body5.usage.totalTokens).toBeGreaterThan(0);
 
-    // 15 ve 30 soruluk EASY / HARD üretimler
+    // Tek seferde izin verilen 10 soru üst sınırı ve EASY / HARD üretimler
     for (const [count, diff] of [
-      [15, 'EASY'],
-      [30, 'HARD'],
+      [3, 'EASY'],
+      [10, 'HARD'],
     ] as const) {
       const r = await fetch(`${baseUrl}/api/ai/generate`, {
         method: 'POST',
@@ -1032,22 +1039,52 @@ describe('Aşama 12: Yapay Zekâ Destekli Quiz Oluşturma, PDF İşleme, Kalite 
     }
   });
 
-  it('7. Gerçek createGeminiAiQuizProvider HTTP istemcisini (x-goog-api-key, zaman aşımı, API hatası) ve tek soru yenileme + rate limit korumalarını doğrular', async () => {
-    let serverMode: 'ok' | 'rate_limit' | 'timeout' = 'ok';
+  it('7. @google/genai SDK istemcisini (model doğrulama, x-goog-api-key, geçersiz anahtar, 429 ücretsiz kota aşımı, ücretli modele geçmeme, zaman aşımı) ve rate limit korumalarını doğrular', async () => {
+    let serverMode: 'ok' | 'invalid_key' | 'rate_limit' | 'timeout' = 'ok';
     let capturedHeaders: http.IncomingHttpHeaders = {};
     let capturedUrl = '';
     let capturedBody = '';
+    const requestedModelUrls: string[] = [];
 
     const fakeGeminiServer = http.createServer((req, res) => {
       capturedHeaders = req.headers;
       capturedUrl = req.url ?? '';
+      if (req.method === 'GET' && capturedUrl.includes('/models')) {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            models: [
+              {
+                name: 'models/gemini-2.5-flash',
+                supportedGenerationMethods: ['generateContent'],
+                supportedActions: ['generateContent'],
+              },
+              {
+                name: 'models/gemini-2.5-pro',
+                supportedGenerationMethods: ['generateContent'],
+                supportedActions: ['generateContent'],
+              },
+            ],
+          }),
+        );
+        return;
+      }
+
+      requestedModelUrls.push(capturedUrl);
       const chunks: Buffer[] = [];
       req.on('data', (c: Buffer) => chunks.push(c));
       req.on('end', () => {
         capturedBody = Buffer.concat(chunks).toString('utf8');
+        if (serverMode === 'invalid_key') {
+          res.statusCode = 403;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: { code: 403, message: 'API_KEY_INVALID' } }));
+          return;
+        }
         if (serverMode === 'rate_limit') {
           res.statusCode = 429;
-          res.end('Too Many Requests');
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } }));
           return;
         }
         if (serverMode === 'timeout') {
@@ -1091,10 +1128,11 @@ describe('Aşama 12: Yapay Zekâ Destekli Quiz Oluşturma, PDF İşleme, Kalite 
     await new Promise<void>((r) => fakeGeminiServer.listen(0, '127.0.0.1', () => r()));
     try {
       const addr = fakeGeminiServer.address() as AddressInfo;
+      // Ücretli "gemini-2.5-pro" istense bile ücretsiz "gemini-2.5-flash" modeline zorlanmalıdır
       const realHttpProvider = createGeminiAiQuizProvider({
         apiKey: 'gizli-sunucu-anahtari-123',
-        model: 'gemini-2.5-flash',
-        timeoutMs: 120,
+        model: 'gemini-2.5-pro',
+        timeoutMs: 180,
         apiBaseUrl: `http://127.0.0.1:${addr.port}`,
       });
 
@@ -1112,9 +1150,29 @@ describe('Aşama 12: Yapay Zekâ Destekli Quiz Oluşturma, PDF İşleme, Kalite 
       });
       expect(capturedHeaders['x-goog-api-key']).toBe('gizli-sunucu-anahtari-123');
       expect(capturedUrl).not.toContain('gizli-sunucu-anahtari-123');
+      expect(capturedUrl).toContain('gemini-2.5-flash');
       expect(capturedBody).toContain('"responseMimeType":"application/json"');
       expect(okRes.usage.totalTokens).toBe(240);
+      expect(realHttpProvider.getStatus().verifiedFreeTierModel).toBe(true);
 
+      // Geçersiz API anahtarı (403 -> AI_AUTH_ERROR 502)
+      serverMode = 'invalid_key';
+      await expect(
+        realHttpProvider.generateQuiz({
+          mode: 'TOPIC',
+          topic: 'Üslü Sayılar',
+          gradeLevel: 'Ortaokul (5-8. Sınıf)',
+          category: 'Matematik',
+          difficulty: 'MEDIUM',
+          questionCount: 5,
+          questionTypes: ['MULTIPLE_CHOICE'],
+          language: 'Türkçe',
+          timeLimitSec: 20,
+          points: 1000,
+        }),
+      ).rejects.toMatchObject({ code: 'AI_AUTH_ERROR', statusCode: 502 });
+
+      // Ücretsiz kota aşımı (429 -> 503 AI_PROVIDER_RATE_LIMIT) ve ücretli modele ASLA geçmeme
       serverMode = 'rate_limit';
       await expect(
         realHttpProvider.generateQuiz({
@@ -1129,8 +1187,14 @@ describe('Aşama 12: Yapay Zekâ Destekli Quiz Oluşturma, PDF İşleme, Kalite 
           timeLimitSec: 20,
           points: 1000,
         }),
-      ).rejects.toMatchObject({ code: 'AI_PROVIDER_RATE_LIMIT', statusCode: 503 });
+      ).rejects.toMatchObject({
+        code: 'AI_PROVIDER_RATE_LIMIT',
+        statusCode: 503,
+        message: 'Yapay zekâ hizmeti geçici olarak kullanım sınırına ulaştı. Lütfen daha sonra tekrar dene.',
+      });
+      expect(requestedModelUrls.every((u) => !u.includes('pro'))).toBe(true);
 
+      // Zaman aşımı
       serverMode = 'timeout';
       await expect(
         realHttpProvider.generateQuiz({
@@ -1181,6 +1245,7 @@ describe('Aşama 12: Yapay Zekâ Destekli Quiz Oluşturma, PDF İşleme, Kalite 
     const limitedApp = createServerApp({
       aiQuizProvider: mockProvider,
       aiRateLimitMax: 2,
+      aiDailyLimitMax: 50,
     });
     await new Promise<void>((r) => limitedApp.httpServer.listen(0, '127.0.0.1', () => r()));
     try {
@@ -1383,6 +1448,155 @@ describe('Aşama 12: Yapay Zekâ Destekli Quiz Oluşturma, PDF İşleme, Kalite 
     } finally {
       hostSocket.disconnect();
       studentSocket.disconnect();
+    }
+  });
+
+  it('9. Öğretmenin günlük 5 hakkını, başarısız isteklerde hak düşmemesini, eşzamanlı limit yarışını ve Europe/Istanbul gece yarısı yenilenmesini doğrular', async () => {
+    // 2026-11-20T20:59:00Z == 2026-11-20 23:59:00 Europe/Istanbul
+    let simulatedClock = new Date('2026-11-20T20:59:00.000Z');
+    let failProviderWithRateLimit = false;
+    let delayMs = 0;
+
+    const quotaProvider: AiQuizProvider = {
+      getStatus: () => ({
+        configured: true,
+        provider: 'google-gemini',
+        sdk: '@google/genai',
+        model: 'gemini-2.5-flash',
+        verifiedFreeTierModel: true,
+        ocrSupported: false,
+        maxPdfSizeBytes: 10 * 1024 * 1024,
+        minQuestions: 1,
+        maxQuestions: 10,
+        minTextChars: 120,
+        minTextWords: 20,
+        maxTextChars: 40_000,
+        rateLimitPerHour: 30,
+        dailyLimit: 5,
+      }),
+      async generateQuiz(input) {
+        if (delayMs > 0) {
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
+        if (failProviderWithRateLimit) {
+          throw new AiDomainError(
+            'AI_PROVIDER_RATE_LIMIT',
+            'Yapay zekâ hizmeti geçici olarak kullanım sınırına ulaştı. Lütfen daha sonra tekrar dene.',
+            503,
+            true,
+          );
+        }
+        return behaviorHandler('generate', input);
+      },
+      regenerateQuestion: (input) => behaviorHandler('regenerate', input),
+    };
+
+    // Öğretmen B için temiz başlangıç kotası
+    await prisma.teacherAiDailyUsage.deleteMany({
+      where: { teacherId: teacherBId },
+    });
+
+    const quotaApp = createServerApp({
+      aiQuizProvider: quotaProvider,
+      aiRateLimitMax: 30,
+      aiDailyLimitMax: 5,
+      aiNowFn: () => simulatedClock,
+    });
+    await new Promise<void>((r) => quotaApp.httpServer.listen(0, '127.0.0.1', () => r()));
+
+    try {
+      const addr = quotaApp.httpServer.address() as AddressInfo;
+      const quotaUrl = `http://127.0.0.1:${addr.port}`;
+
+      // 9a. Başlangıç durumu: 5 / 5 hak
+      const status0 = await fetch(`${quotaUrl}/api/ai/status`, {
+        headers: { Cookie: teacherBCookie },
+      });
+      expect(status0.status).toBe(200);
+      const statusBody0 = (await status0.json()) as AiServiceStatus;
+      expect(statusBody0.dailyQuota?.remainingToday).toBe(5);
+      expect(statusBody0.dailyQuota?.timezone).toBe('Europe/Istanbul');
+      expect(statusBody0.dailyQuota?.usageDate).toBe('2026-11-20');
+
+      const makeReq = () =>
+        fetch(`${quotaUrl}/api/ai/generate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: teacherBCookie,
+            'X-CSRF-Token': teacherBCsrf,
+          },
+          body: JSON.stringify({
+            mode: 'TOPIC',
+            topic: 'Basit Makineler',
+            category: 'Fen Bilimleri',
+            gradeLevel: 'Ortaokul (5-8. Sınıf)',
+            difficulty: 'MEDIUM',
+            questionCount: 5,
+            questionTypes: ['MULTIPLE_CHOICE'],
+            language: 'Türkçe',
+            timeLimitSec: 20,
+            points: 1000,
+            consentAccepted: true,
+          }),
+        });
+
+      // 9b. Başarısız sağlayıcı isteği hakkı tüketmemeli
+      failProviderWithRateLimit = true;
+      const failRes = await makeReq();
+      expect(failRes.status).toBe(503);
+      const failBody = (await failRes.json()) as { code: string; message: string };
+      expect(failBody.code).toBe('AI_PROVIDER_RATE_LIMIT');
+      expect(failBody.message).toBe(
+        'Yapay zekâ hizmeti geçici olarak kullanım sınırına ulaştı. Lütfen daha sonra tekrar dene.',
+      );
+      failProviderWithRateLimit = false;
+
+      const afterFailStatus = (await (
+        await fetch(`${quotaUrl}/api/ai/status`, { headers: { Cookie: teacherBCookie } })
+      ).json()) as AiServiceStatus;
+      expect(afterFailStatus.dailyQuota?.remainingToday).toBe(5);
+
+      // 9c. Eşzamanlı 3 paralel istek: yalnızca 1 tanesi işleme alınır, diğerleri 409 ile durdurulur
+      delayMs = 150;
+      const concurrentResults = await Promise.all([makeReq(), makeReq(), makeReq()]);
+      delayMs = 0;
+
+      const concurrentStatuses = concurrentResults.map((r) => r.status).sort();
+      expect(concurrentStatuses).toEqual([200, 409, 409]);
+
+      // 9d. Kalan 4 hakkı tamamlayıp 5/5 sınırını doldurma
+      for (let i = 0; i < 4; i += 1) {
+        const ok = await makeReq();
+        expect(ok.status).toBe(200);
+      }
+
+      // 6. istek: günlük hak bitti -> 429 DAILY_LIMIT_REACHED ve exact Türkçe mesaj
+      const blocked = await makeReq();
+      expect(blocked.status).toBe(429);
+      const blockedJson = (await blocked.json()) as { code: string; message: string };
+      expect(blockedJson.code).toBe('DAILY_LIMIT_REACHED');
+      expect(blockedJson.message).toBe(
+        'Bugünkü 5 yapay zekâ ile quiz oluşturma hakkını kullandın. Hakların yarın yenilenecek.',
+      );
+
+      // 9e. Türkiye saatiyle 00:00 (2026-11-20T21:00:05Z = 2026-11-21 00:00:05 TSİ) geçince hak 5'e yenilenir
+      simulatedClock = new Date('2026-11-20T21:00:05.000Z');
+      const nextDayStatus = (await (
+        await fetch(`${quotaUrl}/api/ai/status`, { headers: { Cookie: teacherBCookie } })
+      ).json()) as AiServiceStatus;
+      expect(nextDayStatus.dailyQuota?.usageDate).toBe('2026-11-21');
+      expect(nextDayStatus.dailyQuota?.remainingToday).toBe(5);
+
+      const nextDayRes = await makeReq();
+      expect(nextDayRes.status).toBe(200);
+    } finally {
+      await prisma.teacherAiDailyUsage.deleteMany({
+        where: { teacherId: teacherBId },
+      });
+      quotaApp.gameManager.dispose();
+      await new Promise<void>((r) => quotaApp.io.close(() => r()));
+      await new Promise<void>((r) => quotaApp.httpServer.close(() => r()));
     }
   });
 });
